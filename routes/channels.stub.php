@@ -18,15 +18,17 @@ use Illuminate\Support\Facades\Broadcast;
 |                 primary_domain->domain matches the provided {domain}.
 |
 */
-Broadcast::channel('locks.{domain}', function ($user, $domain) {
-    if (! $user) {
-        return false;
-    }
+if (config('locking.tenancy')) {
+    // Multi-Tenancy aktiv → tenant.{domain}.locks
+    Broadcast::channel('tenant.{domain}.locks', function ($user, $domain) {
+        if (! $user) return false;
 
-    if (config('locking.tenancy')) {
-        return $user->tenant 
+        return $user->tenant
             && $user->tenant->primary_domain->domain === $domain;
-    }
-
-    return true;
-});
+    });
+} else {
+    // Keine Tenancy → locks.{domain}
+    Broadcast::channel('locks.{domain}', function ($user, $domain) {
+        return (bool) $user;
+    });
+}
