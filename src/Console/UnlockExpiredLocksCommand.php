@@ -5,6 +5,7 @@ namespace Webgefaehrten\Locking\Console;
 use Illuminate\Console\Command;
 use Webgefaehrten\Locking\Models\Lock;
 use Webgefaehrten\Locking\Events\ModelUnlocked;
+use Stancl\Tenancy\Tenant;
 
 class UnlockExpiredLocksCommand extends Command
 {
@@ -16,11 +17,15 @@ class UnlockExpiredLocksCommand extends Command
         $timeout = (int) ($this->option('timeout') ?? config('locking.timeout', 5));
 
         if (config('locking.tenancy')) {
-            $tenants = $this->option('tenants');
+            $tenantIds = $this->option('tenants');
+
+            $tenants = $tenantIds
+                ? Tenant::whereIn('id', $tenantIds)->get()
+                : Tenant::all();
 
             tenancy()->runForMultiple(
-                $tenants ?: tenancy()->all(),
-                function ($tenant) use ($timeout) {
+                $tenants,
+                function (Tenant $tenant) use ($timeout) {
                     $this->cleanupLocks($timeout, $tenant->primary_domain->domain ?? 'default');
                     $this->info("Locks für Tenant {$tenant->id} bereinigt");
                 }
