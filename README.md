@@ -139,7 +139,7 @@ Broadcast::channel('locks.{domain}', function ($user, $domain) {
 
 Hinweis zur Domain-Ermittlung:
 - Wenn `config('locking.tenancy') === true`, ermittelt das Trait die Domain automatisch aus `tenant()->primary_domain->domain` und nutzt damit garantiert den Channel `locks.{tenantDomain}`.
-- Wenn Tenancy deaktiviert ist, wird standardmäßig die Domain `default` verwendet. Du kannst optional eine eigene Domain an `lock($domain)`/`unlock($domain)` übergeben.
+- Wenn Tenancy deaktiviert ist, wird standardmäßig die Domain `default` verwendet.
 
 ---
 
@@ -245,7 +245,7 @@ Für Optimistic Locking kannst du auf deinem Model optional `handleConflictMessa
 
 ## 🧪 Tipps für Livewire-Integration
 
-### Livewire – Aktives Locking (Best Practice)
+### Livewire – Vollständige Anleitung (Lock, Check, Handler)
 
 Damit die Sperre nicht ausläuft, sollte sie periodisch erneuert werden. Rufe `lock()` beim Start und anschließend per Polling regelmäßig auf. Gib die Sperre bei Speichern/Abbrechen frei.
 
@@ -262,17 +262,31 @@ class TourEdit extends Component
     {
         $this->tour = Tour::findOrFail($id);
 
-        // Aktives Lock setzen (bei Tenancy wird Domain automatisch ermittelt)
-        if (! $this->tour->lock()) {
-            session()->flash('error', 'Tour wird gerade von einem anderen Benutzer bearbeitet.');
-            $this->redirectRoute('tours.index');
+        // (1) Prüfen, ob gesperrt
+        if ($this->tour->isLocked()) {
+            // gleicher User? -> Lock erneuern und weiter
+            if (optional($this->tour->lockedBy())->id === auth()->id()) {
+                $this->tour->lock();
+            } else {
+                // fremd gesperrt -> Meldung anzeigen und zurück
+                $this->dispatch('flux-toast', [
+                    'title' => 'Dieser Datensatz ist aktuell gesperrt.',
+                    'variant' => 'warning',
+                ]);
+                return $this->redirectRoute('tours.index');
+            }
+        } else {
+            // (2) Nicht gesperrt -> jetzt sperren (Race-Condition absichern)
+            if (! $this->tour->lock()) {
+                session()->flash('error', 'Dieser Datensatz wurde soeben von jemand anderem gesperrt.');
+                return $this->redirectRoute('tours.index');
+            }
         }
     }
 
-    // Wird durch Polling im Template aufgerufen (siehe unten)
+    // (3) Polling hält die Sperre aktiv
     public function refreshLock(): void
     {
-        // Verlängert die Sperre (locked_at = now())
         $this->tour->lock();
     }
 
@@ -281,7 +295,7 @@ class TourEdit extends Component
         // Beispiel-Validierung/Speichern ...
         $this->tour->save();
 
-        // Sperre freigeben
+        // (4) Sperre freigeben
         $this->tour->unlock();
         session()->flash('success', 'Gespeichert.');
         $this->redirectRoute('tours.index');
@@ -293,7 +307,7 @@ class TourEdit extends Component
         $this->redirectRoute('tours.index');
     }
 
-    // Echo-Listener für Locks in diesem Mandanten/Kontext
+    // Echo-Listener für Locks im aktuellen Kontext
     public function getListeners(): array
     {
         $domain = config('locking.tenancy')
