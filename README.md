@@ -83,12 +83,14 @@ class Tour extends Model {
 $tour = Tour::find($id);
 
 // Lock setzen (gibt false zurück, wenn schon von anderem User gelockt)
-if (! $tour->lock('lehmann')) {
+// Hinweis: Domain muss nicht übergeben werden. Bei Tenancy
+// wird automatisch tenant()->primary_domain->domain verwendet.
+if (! $tour->lock()) {
     return back()->with('error', 'Tour wird gerade von einem anderen Benutzer bearbeitet.');
 }
 
 // Beim Speichern / Abbrechen entsperren
-$tour->unlock('lehmann');
+$tour->unlock();
 ```
 
 **Nützliche Helfer:**
@@ -134,6 +136,10 @@ Broadcast::channel('locks.{domain}', function ($user, $domain) {
     return true;
 });
 ```
+
+Hinweis zur Domain-Ermittlung:
+- Wenn `config('locking.tenancy') === true`, ermittelt das Trait die Domain automatisch aus `tenant()->primary_domain->domain` und nutzt damit garantiert den Channel `locks.{tenantDomain}`.
+- Wenn Tenancy deaktiviert ist, wird standardmäßig die Domain `default` verwendet. Du kannst optional eine eigene Domain an `lock($domain)`/`unlock($domain)` übergeben.
 
 ---
 
@@ -203,21 +209,27 @@ Broadcast::channel('locks.{domain}', function ($user, $domain) {
 
 ---
 
-## Messages
+## Messages (optionale UI-Handler)
+
+Du kannst in deinen Models optionale Handler-Methoden hinterlegen, um Benutzerfeedback (Flash/Toast) auszugeben:
+
+```php
+use Webgefaehrten\Locking\Traits\PessimisticLockingTrait;
+
+class Tour extends Model
+{
+    use PessimisticLockingTrait;
+
+    // Wird aufgerufen, wenn das Model bereits durch jemand anderes gesperrt ist
+    public function handleLockMessage(string $message): void
+    {
+        session()->flash('error', $message);
+        // oder: $this->dispatch('flux-toast', ['title' => $message, 'variant' => 'warning']);
+    }
+}
 ```
-Tour::setLockMessageHandler(function ($message, $model) {
-    session()->flash('error', $message);
-});
 
-Contact::setConflictMessageHandler(function ($message, $model) {
-    session()->flash('error', $message);
-});
-
-Tour::setLockMessageHandler(fn($msg) => $this->dispatch('flux-toast', [
-    'title' => $msg, 'variant' => 'warning'
-]));
-
-```
+Für Optimistic Locking kannst du auf deinem Model optional `handleConflictMessage(string $message): void` implementieren. Diese Methode wird vor dem Werfen der Exception aufgerufen.
 
 ## ✅ Zusammenfassung
 
@@ -233,19 +245,104 @@ Tour::setLockMessageHandler(fn($msg) => $this->dispatch('flux-toast', [
 
 ## 🧪 Tipps für Livewire-Integration
 
-In deiner Livewire-Komponente:
+### Livewire – Aktives Locking (Best Practice)
+
+Damit die Sperre nicht ausläuft, sollte sie periodisch erneuert werden. Rufe `lock()` beim Start und anschließend per Polling regelmäßig auf. Gib die Sperre bei Speichern/Abbrechen frei.
 
 ```php
-protected $listeners = ['echo-private:locks.'.tenant()->primary_domain->domain.',ModelLocked' => 'onLocked'];
+// app/Livewire/TourEdit.php
+use Livewire\Component;
+use App\Models\Tour;
 
-public function onLocked($data)
+class TourEdit extends Component
 {
-    $this->dispatch('flux-toast', [
-        'title' => $data['message'],
-        'variant' => 'warning',
-    ]);
+    public Tour $tour;
+
+    public function mount(int $id): void
+    {
+        $this->tour = Tour::findOrFail($id);
+
+        // Aktives Lock setzen (bei Tenancy wird Domain automatisch ermittelt)
+        if (! $this->tour->lock()) {
+            session()->flash('error', 'Tour wird gerade von einem anderen Benutzer bearbeitet.');
+            $this->redirectRoute('tours.index');
+        }
+    }
+
+    // Wird durch Polling im Template aufgerufen (siehe unten)
+    public function refreshLock(): void
+    {
+        // Verlängert die Sperre (locked_at = now())
+        $this->tour->lock();
+    }
+
+    public function save(): void
+    {
+        // Beispiel-Validierung/Speichern ...
+        $this->tour->save();
+
+        // Sperre freigeben
+        $this->tour->unlock();
+        session()->flash('success', 'Gespeichert.');
+        $this->redirectRoute('tours.index');
+    }
+
+    public function cancel(): void
+    {
+        $this->tour->unlock();
+        $this->redirectRoute('tours.index');
+    }
+
+    // Echo-Listener für Locks in diesem Mandanten/Kontext
+    public function getListeners(): array
+    {
+        $domain = config('locking.tenancy')
+            ? tenant()->primary_domain->domain
+            : 'default';
+
+        return [
+            "echo-private:locks.$domain,ModelLocked" => 'onLocked',
+            "echo-private:locks.$domain,ModelUnlocked" => 'onUnlocked',
+        ];
+    }
+
+    public function onLocked(array $data): void
+    {
+        if ($data['model_type'] === Tour::class && (int)$data['model_id'] === (int)$this->tour->id) {
+            $this->dispatch('flux-toast', [
+                'title' => $data['message'],
+                'variant' => 'warning',
+            ]);
+        }
+    }
+
+    public function onUnlocked(array $data): void
+    {
+        if ($data['model_type'] === Tour::class && (int)$data['model_id'] === (int)$this->tour->id) {
+            $this->dispatch('flux-toast', [
+                'title' => $data['message'],
+                'variant' => 'success',
+            ]);
+        }
+    }
 }
 ```
+
+Template mit Polling (erneuert die Sperre z. B. alle 60 Sekunden):
+
+```blade
+<div wire:poll.60s="refreshLock">
+    <!-- Formular / UI für die Bearbeitung -->
+
+    <button wire:click="save">Speichern</button>
+    <button wire:click="cancel">Abbrechen</button>
+</div>
+```
+
+Hinweise:
+- Wähle das Polling-Intervall kleiner als `config('locking.timeout')` (Standard: 5 Minuten). 60 Sekunden ist ein guter Startwert.
+- `lock()` ist idempotent für den gleichen Benutzer und aktualisiert `locked_at` jedes Mal.
+- `unlock()` sollte in allen Abbruch/Speicher-Flows aufgerufen werden. Optional kannst du per `beforeunload`-Handler (Beacon) zusätzlich absichern.
 
 ---
 

@@ -7,7 +7,8 @@ use Webgefaehrten\Locking\Events\ModelLocked;
 use Webgefaehrten\Locking\Events\ModelUnlocked;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
 
 /**
  * DE: Trait für pessimistische Sperren (exklusive Bearbeitung pro Nutzer und Model-Instanz).
@@ -33,12 +34,12 @@ trait PessimisticLockingTrait
     /**
      * Setzt oder erneuert die Sperre für den aktuellen Benutzer.
      *
-     * @param string $domain   Domain/Mandant für den Broadcast-Kanal (z. B. Tenant-Domain)
-     * @return bool            true, wenn gesperrt wurde; false, wenn bereits fremd gesperrt
+     * @return bool  true, wenn gesperrt wurde; false, wenn bereits fremd gesperrt
      */
-    public function lock(string $domain): bool
+    public function lock(): bool
     {
         $timeout = (int) Config::get('locking.timeout');
+        $domain = $this->resolveDomain();
         $existingLock = $this->lockRecord;
 
         if ($existingLock && (
@@ -48,14 +49,14 @@ trait PessimisticLockingTrait
             $existingLock->delete();
         }
 
-        if ($this->lockRecord && $this->lockRecord->locked_by !== \Illuminate\Support\Facades\Auth::id()) {
+        if ($this->lockRecord && $this->lockRecord->locked_by !== Auth::id()) {
             $this->fireLockMessage("Eintrag #{$this->id} ist bereits von einem anderen Benutzer gesperrt.");
             return false;
         }
 
         $lock = $this->lockRecord()->updateOrCreate(
             ['lockable_type' => static::class, 'lockable_id' => $this->id],
-            ['locked_by' => \Illuminate\Support\Facades\Auth::id(), 'locked_at' => Carbon::now()]
+            ['locked_by' => Auth::id(), 'locked_at' => Carbon::now()]
         );
 
         Event::dispatch(new ModelLocked($lock, $domain));
@@ -65,13 +66,13 @@ trait PessimisticLockingTrait
     /**
      * Entfernt die eigene Sperre und broadcastet `ModelUnlocked`.
      *
-     * @param string $domain
      * @return void
      */
-    public function unlock(string $domain): void
+    public function unlock(): void
     {
+        $domain = $this->resolveDomain();
         $lock = $this->lockRecord;
-        if ($lock && $lock->locked_by === \Illuminate\Support\Facades\Auth::id()) {
+        if ($lock && $lock->locked_by === Auth::id()) {
             $lock->delete();
             Event::dispatch(new ModelUnlocked($domain, static::class, $this->id));
         }
@@ -100,7 +101,7 @@ trait PessimisticLockingTrait
             return false;
         }
 
-        return $lock->locked_by !== \Illuminate\Support\Facades\Auth::id();
+        return $lock->locked_by !== Auth::id();
     }
 
     /**
@@ -135,5 +136,26 @@ trait PessimisticLockingTrait
         if (method_exists($this, 'handleLockMessage')) {
             $this->handleLockMessage($message);
         }
+    }
+
+    /**
+     * Ermittelt die Broadcast-Domain. Bei aktivierter Tenancy wird die Tenant-Primary-Domain genutzt.
+     * Fallback ist "default".
+     *
+     * @return string
+     */
+    protected function resolveDomain(): string
+    {
+        if ((bool) Config::get('locking.tenancy', false)) {
+            // Stancl Tenancy Helper sicher verwenden, falls vorhanden
+            if (function_exists('tenant')) {
+                $tenant = \tenant();
+                if ($tenant && isset($tenant->primary_domain) && isset($tenant->primary_domain->domain)) {
+                    return (string) $tenant->primary_domain->domain;
+                }
+            }
+        }
+
+        return 'default';
     }
 }
