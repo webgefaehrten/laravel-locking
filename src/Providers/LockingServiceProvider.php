@@ -5,6 +5,7 @@ namespace Webgefaehrten\Locking\Providers;
 use Illuminate\Support\ServiceProvider;
 use Webgefaehrten\Locking\Console\InstallCommand;
 use Webgefaehrten\Locking\Console\UnlockExpiredLocksCommand;
+use Illuminate\Console\Scheduling\Schedule;
 
 /**
  * DE: Service Provider des Locking-Pakets. Veröffentlicht Konfiguration, Migrationen und Channels,
@@ -14,56 +15,52 @@ use Webgefaehrten\Locking\Console\UnlockExpiredLocksCommand;
  */
 class LockingServiceProvider extends ServiceProvider
 {
-    /**
-     * DE: Bootstrap-Phase: Publishing, Migrations laden und Scheduler konfigurieren.
-     * EN: Bootstrap phase: publish assets, load migrations and configure the scheduler.
-     */
     public function boot()
     {
         $this->publishes([
-            __DIR__.'/../../config/locking.php' => config_path('locking.php'),
+            __DIR__ . '/../../config/locking.php' => config_path('locking.php'),
         ], 'locking-config');
 
         $this->publishes([
-            __DIR__.'/../../database/migrations' => database_path('migrations'),
+            __DIR__ . '/../../database/migrations' => database_path('migrations'),
         ], 'locking-migrations');
 
         $this->publishes([
-            __DIR__.'/../../routes/channels.stub.php' => base_path('routes/channels.php'),
+            __DIR__ . '/../../routes/channels.stub.php' => base_path('routes/channels.php'),
         ], 'locking-channels');
 
-        $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+        $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
 
         $this->app->booted(function () {
-            $schedule = $this->app->make(\Illuminate\Console\Scheduling\Schedule::class);
+            $schedule = $this->app->make(Schedule::class);
 
-            if (config('locking.tenancy')) {
-                $schedule->command('tenants:run locking:cleanup --timeout='.config('locking.timeout'))
-                    ->everyMinutes(config('locking.interval'))
-                    ->onOneServer()
-                    ->withoutOverlapping()
-                    ->runInBackground()
-                    ->appendOutputTo(storage_path('logs/locking.log'))
-                    ->onQueue(config('locking.queue'));
-            } else {
-                $schedule->command('locking:cleanup --timeout='.config('locking.timeout'))
-                    ->everyMinutes(config('locking.interval'))
-                    ->onOneServer()
-                    ->withoutOverlapping()
-                    ->runInBackground()
-                    ->appendOutputTo(storage_path('logs/locking.log'))
-                    ->onQueue(config('locking.queue'));
-            }
+            $interval = (int) config('locking.interval', 5);
+            $command = config('locking.tenancy')
+                ? "tenants:run locking:cleanup --timeout=" . config('locking.timeout')
+                : "locking:cleanup --timeout=" . config('locking.timeout');
+
+            $event = $schedule->command($command)
+                ->onOneServer()
+                ->withoutOverlapping()
+                ->runInBackground()
+                ->appendOutputTo(storage_path('logs/locking.log'))
+                ->onQueue(config('locking.queue', 'locking'));
+
+            // Laravel 12-kompatibles Intervall-Mapping
+            match ($interval) {
+                1  => $event->everyMinute(),
+                5  => $event->everyFiveMinutes(),
+                10 => $event->everyTenMinutes(),
+                15 => $event->everyFifteenMinutes(),
+                30 => $event->everyThirtyMinutes(),
+                default => $event->hourly(),
+            };
         });
     }
 
-    /**
-     * DE: Konfiguration zusammenführen und Konsolenbefehle registrieren.
-     * EN: Merge configuration and register console commands.
-     */
     public function register()
     {
-        $this->mergeConfigFrom(__DIR__.'/../../config/locking.php', 'locking');
+        $this->mergeConfigFrom(__DIR__ . '/../../config/locking.php', 'locking');
 
         $this->commands([
             InstallCommand::class,
