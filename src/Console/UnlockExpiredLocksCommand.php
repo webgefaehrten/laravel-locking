@@ -1,4 +1,4 @@
-<?php 
+<?php
 
 namespace Webgefaehrten\Locking\Console;
 
@@ -6,10 +6,6 @@ use Illuminate\Console\Command;
 use Webgefaehrten\Locking\Models\Lock;
 use Webgefaehrten\Locking\Events\ModelUnlocked;
 
-/**
- * DE: Konsolenbefehl, der abgelaufene Sperren (Locks) aufräumt und entsprechende Events broadcastet.
- * EN: Console command that cleans up expired locks and broadcasts the corresponding events.
- */
 class UnlockExpiredLocksCommand extends Command
 {
     protected $signature = 'locking:cleanup {--timeout=} {--tenants=*}';
@@ -17,49 +13,40 @@ class UnlockExpiredLocksCommand extends Command
 
     public function handle()
     {
-        $timeout = $this->option('timeout') ?? config('locking.timeout');
+        $timeout = (int) ($this->option('timeout') ?? config('locking.timeout', 5));
 
         if (config('locking.tenancy')) {
-            return $this->runTenantAware($timeout);
-        }
+            $tenants = $this->option('tenants');
 
-        return $this->runCentral($timeout);
+            tenancy()->runForMultiple(
+                $tenants ?: tenancy()->all(),
+                function ($tenant) use ($timeout) {
+                    $this->cleanupLocks($timeout, $tenant->primary_domain->domain ?? 'default');
+                    $this->info("Locks für Tenant {$tenant->id} bereinigt");
+                }
+            );
+        } else {
+            $this->cleanupLocks($timeout, 'default');
+            $this->info("Zentrale Locks bereinigt");
+        }
     }
 
-    protected function runTenantAware(int $timeout)
+    protected function cleanupLocks(int $timeout, string $domain): void
     {
         $expired = Lock::where('locked_at', '<', now()->subMinutes($timeout))->get();
         $count = 0;
 
         foreach ($expired as $lock) {
-            $domain = tenant()->primary_domain->domain ?? 'default';
             broadcast(new ModelUnlocked(
                 $domain,
                 $lock->lockable_type,
                 $lock->lockable_id
             ))->toOthers();
+
             $lock->delete();
             $count++;
         }
 
-        $this->info("[$count] Locks entfernt (Tenant ".tenant('id').")");
-    }
-
-    protected function runCentral(int $timeout)
-    {
-        $expired = Lock::where('locked_at', '<', now()->subMinutes($timeout))->get();
-        $count = 0;
-
-        foreach ($expired as $lock) {
-            broadcast(new ModelUnlocked(
-                'default',
-                $lock->lockable_type,
-                $lock->lockable_id
-            ))->toOthers();
-            $lock->delete();
-            $count++;
-        }
-
-        $this->info("[$count] zentrale Locks entfernt");
+        $this->line(" → [$count] Locks entfernt (Domain: {$domain})");
     }
 }
