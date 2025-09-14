@@ -5,7 +5,7 @@ namespace Webgefaehrten\Locking\Console;
 use Illuminate\Console\Command;
 use Webgefaehrten\Locking\Models\Lock;
 use Webgefaehrten\Locking\Events\ModelUnlocked;
-use Stancl\Tenancy\Tenant;
+use App\Models\Tenant; // <-- dein Tenant-Modell
 
 class UnlockExpiredLocksCommand extends Command
 {
