@@ -7,12 +7,6 @@ use Webgefaehrten\Locking\Console\InstallCommand;
 use Webgefaehrten\Locking\Console\UnlockExpiredLocksCommand;
 use Illuminate\Console\Scheduling\Schedule;
 
-/**
- * DE: Service Provider des Locking-Pakets. Veröffentlicht Konfiguration, Migrationen und Channels,
- *     registriert Befehle und plant den Aufräum-Job je nach Tenancy-Einstellung.
- * EN: Locking package service provider. Publishes config, migrations and channels,
- *     registers commands and schedules the cleanup job depending on tenancy settings.
- */
 class LockingServiceProvider extends ServiceProvider
 {
     public function boot()
@@ -43,8 +37,7 @@ class LockingServiceProvider extends ServiceProvider
                 ->onOneServer()
                 ->withoutOverlapping()
                 ->runInBackground()
-                ->appendOutputTo(storage_path('logs/locking.log'))
-                ->onQueue(config('locking.queue', 'locking'));
+                ->appendOutputTo(storage_path('logs/locking.log'));
 
             // Laravel 12-kompatibles Intervall-Mapping
             match ($interval) {
