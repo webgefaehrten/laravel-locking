@@ -130,6 +130,11 @@ class Contact extends Model {
 - Beim Freigeben (`unlock`) ein `ModelUnlocked` Event
 - Andere Nutzer können dies per Livewire-Listener empfangen und z. B. mit **Flux Toast** anzeigen
 
+Hinweis (Queue + Tenancy):
+- Das Paket broadcastet Events über einen Queue-Job (`BroadcastLockEvent`).
+- Wenn `tenancy=true`, wird im Job automatisch der Tenant-Kontext initialisiert, damit die Events im richtigen Mandantenkanal landen.
+- Stelle sicher, dass ein Queue-Worker/Horizon läuft und die Queue aus `config('locking.queue', 'locking')` verarbeitet.
+
 **Channel Auth (`routes/channels.php`):**
 ```php
 Broadcast::channel('locks.{domain}', function ($user, $domain) {

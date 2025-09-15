@@ -9,6 +9,12 @@
         "laravel/horizon": ">=5.0",
         "livewire/flux": ">=1.0"
     },
+    "require-dev": {
+        "phpstan/phpstan": "^1.11",
+        "nunomaduro/larastan": "^2.9",
+        "stancl/tenancy": "^3.8",
+        "stancl/jobpipeline": "^1.8"
+    },
     "autoload": {
         "psr-4": {
             "Webgefaehrten\\Locking\\": "src/"
@@ -26,6 +32,11 @@
             ]
         }
     },
+    "suggest": {
+        "stancl/tenancy": "Optional: Tenant-aware Broadcasting & Cleanup (v4)"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
     "authors": [
         {
           "name": "Webgefaehrten - Joshua Levin Scharrer",
