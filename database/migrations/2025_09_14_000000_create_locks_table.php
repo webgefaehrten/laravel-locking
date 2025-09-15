@@ -16,6 +16,11 @@ return new class extends Migration {
      */
     public function up(): void
     {
+        // Falls die Tabelle bereits existiert (z. B. aus früheren Deploys), nichts tun
+        if (Schema::hasTable('locks')) {
+            return;
+        }
+
         Schema::create('locks', function (Blueprint $table) {
             $table->id();
             $table->morphs('lockable');
