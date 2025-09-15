@@ -20,24 +20,55 @@ class InstallCommand extends Command
     {
         $isTenancy = $this->option('tenancy');
 
-        // Nur Hinweise ausgeben, alles wird manuell vom Anwender ausgeführt
-        $this->line('');
-        $this->info('Locking installation helper');
-        $this->line('');
-        $this->line('Bitte manuell publishen:');
-        $this->line('  php artisan vendor:publish --tag=locking-config');
-        $this->line('  php artisan vendor:publish --tag=locking-channels');
-        $this->line('  php artisan vendor:publish --tag=locking-migrations');
-        $this->line('');
-        if ($isTenancy) {
-            $this->line('Tenancy-Hinweis: Verschiebe die veröffentlichte Migration bei Bedarf nach database/migrations/tenant und führe dann:');
-            $this->line('  php artisan tenants:migrate');
-        } else {
-            $this->line('Anschließend Migration ausführen:');
-            $this->line('  php artisan migrate');
+        // DE: Konfiguration veröffentlichen | EN: Publish configuration
+        $this->call('vendor:publish', ['--tag' => 'locking-config']);
+
+        // DE: Broadcast-Channels veröffentlichen | EN: Publish broadcast channels
+        $this->call('vendor:publish', ['--tag' => 'locking-channels']);
+
+        // DE: Migrationen veröffentlichen (mit optionalem Tenant-Support), aber überspringen, wenn bereits vorhanden
+        // EN: Publish migrations (optionally tenant-aware), but skip if already present
+        $srcDir = __DIR__ . '/../../database/migrations';
+        $destDir = $isTenancy ? database_path('migrations/tenant') : database_path('migrations');
+
+        if (! File::exists($destDir)) {
+            File::makeDirectory($destDir, 0755, true);
         }
-        $this->line('');
-        $this->info('Fertig. Keine automatischen Aktionen durchgeführt.');
+
+        $existing = glob($destDir . '/*_create_locks_table.php') ?: [];
+        if (! empty($existing)) {
+            $this->info('Locking migration already exists. Skipping publish.');
+        } else {
+            $srcFiles = glob($srcDir . '/*_create_locks_table.php') ?: [];
+
+            if (empty($srcFiles)) {
+                // Fallback: kopiere alle Dateien aus dem Ordner, falls keine Namensübereinstimmung gefunden wird
+                foreach ((array) glob($srcDir . '/*.php') as $file) {
+                    $target = $destDir . '/' . basename($file);
+                    if (! File::exists($target)) {
+                        File::copy($file, $target);
+                    }
+                }
+            } else {
+                foreach ($srcFiles as $file) {
+                    $target = $destDir . '/' . basename($file);
+                    if (! File::exists($target)) {
+                        File::copy($file, $target);
+                    }
+                }
+            }
+
+            $this->info($isTenancy
+                ? 'Locking migration published to database/migrations/tenant'
+                : 'Locking migration published to database/migrations'
+            );
+        }
+
+        if ($isTenancy) {
+            $this->info('Please run: php artisan tenants:migrate');
+        } else {
+            $this->info('Migrations published. Please run: php artisan migrate');
+        }
 
         $this->info('Locking system installed successfully!');
     }

@@ -42,8 +42,11 @@ class ModelUnlocked implements ShouldBroadcast
      */
     public function broadcastOn()
     {
-        $prefix = config('locking.tenancy') ? 'tenant.' : '';
-        return [new PrivateChannel("{$prefix}{$this->domain}.locks")];
+        if (config('locking.tenancy')) {
+            return [new PrivateChannel("tenant.{$this->domain}.locks")];
+        }
+
+        return [new PrivateChannel("locks.{$this->domain}")];
     }
 
     /**
