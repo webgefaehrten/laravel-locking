@@ -28,7 +28,7 @@ class BroadcastLockEvent implements ShouldQueue
 
     public function __construct(string $action, string $domain, ?string $tenantId = null, ?int $lockId = null, ?string $modelType = null, ?int $modelId = null)
     {
-        $this->onQueue((string) Config::get('locking.queue', 'locking'));
+        $this->onQueue((string) Config::get('locking.queue', 'default'));
 
         $this->action = $action;
         $this->domain = $domain;
