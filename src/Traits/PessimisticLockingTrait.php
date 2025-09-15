@@ -37,6 +37,7 @@ trait PessimisticLockingTrait
     public function lock(): bool
     {
         $timeout = (int) Config::get('locking.timeout');
+        $singlePerTable = (bool) Config::get('locking.single_per_table', true);
         $domain  = $this->resolveDomain();
         $existingLock = $this->lockRecord;
 
@@ -52,6 +53,27 @@ trait PessimisticLockingTrait
         if ($this->lockRecord && $this->lockRecord->locked_by !== Auth::id()) {
             $this->fireLockMessage("Eintrag #{$this->id} ist bereits von einem anderen Benutzer gesperrt.");
             return false;
+        }
+
+        // Falls konfiguriert: Nur eine Sperre pro Tabelle/User zulassen → alte eigene Sperren derselben Tabelle schließen
+        if ($singlePerTable) {
+            Lock::query()
+                ->where('lockable_type', static::class)
+                ->where('locked_by', Auth::id())
+                ->where(function ($q) {
+                    $q->whereNull('lockable_id')->orWhere('lockable_id', '!=', $this->id);
+                })
+                ->get()
+                ->each(function (Lock $oldLock) use ($domain) {
+                    $modelType = $oldLock->lockable_type;
+                    $modelId = (int) $oldLock->lockable_id;
+                    $oldLock->delete();
+
+                    // Event für UI aktualisieren
+                    $event = new ModelUnlocked($domain, $modelType, $modelId);
+                    Event::dispatch($event);
+                    $this->broadcastEvent($event);
+                });
         }
 
         // Sperre setzen oder erneuern

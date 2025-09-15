@@ -58,6 +58,7 @@ php artisan tenants:migrate
 ```php
 return [
     'timeout' => env('LOCKING_TIMEOUT', 5),        // Minuten bis ein Lock verfällt
+    'single_per_table' => env('LOCKING_SINGLE_PER_TABLE', true), // Nur ein Datensatz pro Tabelle/User
     'interval' => env('LOCKING_INTERVAL', 5),      // Cleanup-Intervall in Minuten
     'queue' => env('LOCKING_QUEUE', 'locking'),    // Queue für Cleanup-Jobs
     'tenancy' => env('LOCKING_TENANCY', false),    // Multi-Tenancy aktivieren
@@ -92,6 +93,8 @@ if (! $tour->lock()) {
 // Beim Speichern / Abbrechen entsperren
 $tour->unlock();
 ```
+
+Hinweis: Wenn `single_per_table=true` (Standard), wird beim Sperren eines Datensatzes automatisch jede andere eigene Sperre derselben Tabelle gelöst. So kann ein Nutzer nicht zwei Datensätze derselben Tabelle parallel bearbeiten. Für jede gelöste Sperre wird ein `ModelUnlocked` Event gebroadcastet.
 
 **Nützliche Helfer:**
 ```php

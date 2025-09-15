@@ -13,6 +13,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Single Lock pro Tabelle und Nutzer
+    |--------------------------------------------------------------------------
+    | Wenn true, kann ein Nutzer nicht mehrere Datensätze derselben Tabelle
+    | gleichzeitig bearbeiten. Beim Setzen eines neuen Locks für dieselbe
+    | Tabelle werden vorhandene eigene Locks (andere IDs) automatisch gelöst
+    | und entsprechende Unlocked-Events gebroadcastet.
+    */
+    'single_per_table' => env('LOCKING_SINGLE_PER_TABLE', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cleanup Interval
     |--------------------------------------------------------------------------
     | In welchem Intervall der Cleanup-Command laufen soll.
