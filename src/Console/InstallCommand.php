@@ -26,20 +26,47 @@ class InstallCommand extends Command
         // DE: Broadcast-Channels veröffentlichen | EN: Publish broadcast channels
         $this->call('vendor:publish', ['--tag' => 'locking-channels']);
 
-        // DE: Migrationen veröffentlichen (mit optionalem Tenant-Support) | EN: Publish migrations (optionally tenant-aware)
-        if ($isTenancy) {
-            $tenantPath = database_path('migrations/tenant');
+        // DE: Migrationen veröffentlichen (mit optionalem Tenant-Support), aber überspringen, wenn bereits vorhanden
+        // EN: Publish migrations (optionally tenant-aware), but skip if already present
+        $srcDir = __DIR__ . '/../../database/migrations';
+        $destDir = $isTenancy ? database_path('migrations/tenant') : database_path('migrations');
 
-            if (! File::exists($tenantPath)) {
-                File::makeDirectory($tenantPath, 0755, true);
+        if (! File::exists($destDir)) {
+            File::makeDirectory($destDir, 0755, true);
+        }
+
+        $existing = glob($destDir . '/*_create_locks_table.php') ?: [];
+        if (! empty($existing)) {
+            $this->info('Locking migration already exists. Skipping publish.');
+        } else {
+            $srcFiles = glob($srcDir . '/*_create_locks_table.php') ?: [];
+
+            if (empty($srcFiles)) {
+                // Fallback: kopiere alle Dateien aus dem Ordner, falls keine Namensübereinstimmung gefunden wird
+                foreach ((array) glob($srcDir . '/*.php') as $file) {
+                    $target = $destDir . '/' . basename($file);
+                    if (! File::exists($target)) {
+                        File::copy($file, $target);
+                    }
+                }
+            } else {
+                foreach ($srcFiles as $file) {
+                    $target = $destDir . '/' . basename($file);
+                    if (! File::exists($target)) {
+                        File::copy($file, $target);
+                    }
+                }
             }
 
-            File::copyDirectory(__DIR__.'/../../database/migrations', $tenantPath);
+            $this->info($isTenancy
+                ? 'Locking migration published to database/migrations/tenant'
+                : 'Locking migration published to database/migrations'
+            );
+        }
 
-            $this->info('Locking migrations published to database/migrations/tenant');
+        if ($isTenancy) {
             $this->info('Please run: php artisan tenants:migrate');
         } else {
-            $this->call('vendor:publish', ['--tag' => 'locking-migrations']);
             $this->call('migrate');
             $this->info('Locking migrations migrated centrally');
         }
