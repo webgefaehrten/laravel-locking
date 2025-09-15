@@ -19,7 +19,8 @@ return new class extends Migration {
         Schema::create('locks', function (Blueprint $table) {
             $table->id();
             $table->morphs('lockable');
-            $table->foreignId('locked_by')->constrained('users')->cascadeOnDelete();
+            // Kein Foreign-Key auf users, da im Tenant-Kontext u. U. nicht vorhanden / anders benannt
+            $table->unsignedBigInteger('locked_by');
             $table->timestamp('locked_at');
             $table->timestamps();
         });

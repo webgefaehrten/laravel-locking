@@ -65,6 +65,9 @@ return [
 ];
 ```
 
+Hinweis Migration (Tenant-sicher):
+- Die Spalte `locked_by` referenziert nicht per Foreign-Key die `users`-Tabelle, um Probleme in Tenancy-Deployments (separate DB, abweichende User-Tabellen) zu vermeiden. Wenn du zentral ohne Tenancy arbeitest und einen FK willst, ergänze ihn in deinem Projekt.
+
 ---
 
 ## 🧩 Verwendung
