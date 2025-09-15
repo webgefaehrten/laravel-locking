@@ -1,42 +1,52 @@
 <?php
 
-/**
- * Konfiguration für das Locking-Paket
- * DE: Globale Einstellungen für Zeitlimits, Intervall des Aufräum-Jobs, Queue-Namen und Tenancy-Verhalten.
- * EN: Global settings for timeouts, cleanup job interval, queue name, and tenancy behavior.
- */
 return [
 
-    // DE: Anzahl der Minuten bis ein Lock automatisch abläuft (Timeout).
-    // EN: Number of minutes after which a lock expires automatically (timeout).
+    /*
+    |--------------------------------------------------------------------------
+    | Lock Timeout (in Minuten)
+    |--------------------------------------------------------------------------
+    | Wie lange eine Sperre gültig bleibt, bevor sie automatisch als abgelaufen
+    | gilt und entfernt werden kann.
+    */
     'timeout' => env('LOCKING_TIMEOUT', 5),
 
-    // DE: Intervall in Minuten, in dem der Cleanup-Befehl ausgeführt wird.
-    // EN: Interval in minutes at which the cleanup command is executed.
+    /*
+    |--------------------------------------------------------------------------
+    | Cleanup Interval
+    |--------------------------------------------------------------------------
+    | In welchem Intervall der Cleanup-Command laufen soll.
+    | 1, 5, 10, 15, 30 Minuten oder "hourly".
+    */
     'interval' => env('LOCKING_INTERVAL', 5),
 
-    // DE: Name der Queue, auf der zeitgesteuerte Jobs laufen (z. B. Horizon).
-    // EN: Name of the queue on which scheduled jobs run (e.g., Horizon).
+    /*
+    |--------------------------------------------------------------------------
+    | Queue
+    |--------------------------------------------------------------------------
+    | Queue-Name für den Cleanup-Job.
+    */
     'queue' => env('LOCKING_QUEUE', 'locking'),
 
     /*
     |--------------------------------------------------------------------------
-    | Tenancy aktivieren / Enable tenancy
+    | Tenancy Integration
     |--------------------------------------------------------------------------
-    | DE: Wenn true
-    |   - Channels validieren tenant()->primary_domain->domain
-    |   - Cleanup läuft tenant-aware über "tenants:run"
-    | Wenn false
-    |   - Channels erlauben jeden authentifizierten Benutzer
-    |   - Cleanup läuft zentral gegen die Hauptdatenbank
-    |
-    | EN: If true
-    |   - Channels validate tenant()->primary_domain->domain
-    |   - Cleanup runs tenant-aware via "tenants:run"
-    | If false
-    |   - Channels allow any authenticated user
-    |   - Cleanup runs centrally against the primary database
+    | Ob Stancl Tenancy verwendet wird.
+    | Wenn true → Domain wird über tenant()->primary_domain->domain ermittelt.
     */
-    'tenancy' => env('LOCKING_TENANCY', false),
+    'tenancy' => env('LOCKING_TENANCY', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Broadcast to Self
+    |--------------------------------------------------------------------------
+    | Standardmäßig broadcastet das Paket Locks nur mit ->toOthers(),
+    | d. h. der Client, der das Lock setzt, empfängt sein eigenes Event nicht.
+    | 
+    | Wenn du auch im eigenen Browserfenster Feedback brauchst
+    | (z. B. für Debugging oder direkte UI-Reaktionen), kannst du das aktivieren.
+    */
+    'broadcast_self' => env('LOCKING_BROADCAST_SELF', false),
 
 ];
