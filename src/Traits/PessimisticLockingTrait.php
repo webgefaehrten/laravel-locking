@@ -6,42 +6,41 @@ use Webgefaehrten\Locking\Models\Lock;
 use Webgefaehrten\Locking\Events\ModelLocked;
 use Webgefaehrten\Locking\Events\ModelUnlocked;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Event;
 use Carbon\Carbon;
 
 /**
  * DE: Trait für pessimistische Sperren (exklusive Bearbeitung pro Nutzer und Model-Instanz).
  *
  * Funktionsweise:
- *  - `lock($domain)`: setzt/erneuert die Sperre für den aktuellen Benutzer, broadcastet `ModelLocked`.
- *    Gibt `false` zurück, wenn bereits ein anderer Benutzer gesperrt hat (und ruft optional `handleLockMessage`).
- *  - `unlock($domain)`: entfernt die eigene Sperre und broadcastet `ModelUnlocked`.
+ *  - `lock()`: setzt/erneuert die Sperre für den aktuellen Benutzer, broadcastet `ModelLocked`.
+ *    Gibt `false` zurück, wenn bereits ein anderer Benutzer gesperrt hat (optional `handleLockMessage` im Model).
+ *  - `unlock()`: entfernt die eigene Sperre und broadcastet `ModelUnlocked`.
  *  - `isLocked()`: prüft, ob die Sperre existiert und noch gültig ist (Timeout wird bereinigt).
  *  - `lockedBy()`: liefert den sperrenden Benutzer (oder `null`).
  *  - `lockRecord()`: morphOne-Relation zum `Lock`-Model.
  *
  * Voraussetzungen:
- *  - Tabelle `locks` vorhanden (Migration ausführen)
- *  - Authentifizierung vorhanden (nutzt `Auth::id()`)
- *  - Broadcasting konfiguriert (PrivateChannel `locks.{domain}`)
+ *  - Tabelle `locks` vorhanden (Migration)
+ *  - Authentifizierung vorhanden (`Auth::id()`)
+ *  - Broadcasting konfiguriert (PrivateChannel `tenant.{domain}.locks`)
  *
  * Optional:
- *  - Definiere `handleLockMessage(string $message): void` im Model, um UI-Feedback (Flash/Toast) auszugeben.
+ *  - Definiere `handleLockMessage(string $message): void` im Model für UI-Feedback (z. B. Toast).
  */
 trait PessimisticLockingTrait
 {
     /**
      * Setzt oder erneuert die Sperre für den aktuellen Benutzer.
-     *
-     * @return bool  true, wenn gesperrt wurde; false, wenn bereits fremd gesperrt
      */
     public function lock(): bool
     {
         $timeout = (int) Config::get('locking.timeout');
-        $domain = $this->resolveDomain();
+        $domain  = $this->resolveDomain();
         $existingLock = $this->lockRecord;
 
+        // Alte Sperre abräumen (Timeout oder älter als 1 Stunde)
         if ($existingLock && (
             $existingLock->locked_at->diffInMinutes(Carbon::now()) >= $timeout
             || $existingLock->locked_at->diffInHours(Carbon::now()) >= 1
@@ -49,45 +48,53 @@ trait PessimisticLockingTrait
             $existingLock->delete();
         }
 
+        // Wenn bereits fremd gesperrt → abbrechen
         if ($this->lockRecord && $this->lockRecord->locked_by !== Auth::id()) {
             $this->fireLockMessage("Eintrag #{$this->id} ist bereits von einem anderen Benutzer gesperrt.");
             return false;
         }
 
+        // Sperre setzen oder erneuern
         $lock = $this->lockRecord()->updateOrCreate(
             ['lockable_type' => static::class, 'lockable_id' => $this->id],
             ['locked_by' => Auth::id(), 'locked_at' => Carbon::now()]
         );
 
-        Event::dispatch(new ModelLocked($lock, $domain));
+        // Event lokal + broadcasten
+        $event = new ModelLocked($lock, $domain);
+        Event::dispatch($event);
+
+        $this->broadcastEvent($event);
+
         return true;
     }
 
     /**
      * Entfernt die eigene Sperre und broadcastet `ModelUnlocked`.
-     *
-     * @return void
      */
     public function unlock(): void
     {
         $domain = $this->resolveDomain();
-        $lock = $this->lockRecord;
+        $lock   = $this->lockRecord;
+
         if ($lock && $lock->locked_by === Auth::id()) {
             $lock->delete();
-            Event::dispatch(new ModelUnlocked($domain, static::class, $this->id));
+
+            $event = new ModelUnlocked($domain, static::class, $this->id);
+            Event::dispatch($event);
+
+            $this->broadcastEvent($event);
         }
     }
 
     /**
      * Prüft, ob das Model aktuell (durch einen anderen Benutzer) gesperrt ist.
      * Bereinigt abgelaufene Sperren automatisch.
-     *
-     * @return bool  true, wenn durch anderen Benutzer gesperrt; sonst false
      */
     public function isLocked(): bool
     {
         $timeout = (int) Config::get('locking.timeout');
-        $lock = $this->lockRecord;
+        $lock    = $this->lockRecord;
 
         if (!$lock) {
             return false;
@@ -106,8 +113,6 @@ trait PessimisticLockingTrait
 
     /**
      * Liefert den sperrenden Benutzer oder null, falls keine Sperre existiert.
-     *
-     * @return mixed|null
      */
     public function lockedBy()
     {
@@ -116,8 +121,6 @@ trait PessimisticLockingTrait
 
     /**
      * MorphOne-Relation zum Lock-Datensatz.
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\MorphOne
      */
     public function lockRecord()
     {
@@ -125,11 +128,7 @@ trait PessimisticLockingTrait
     }
 
     /**
-     * Interne Helper-Methode, um optionale UI-Messages zu triggern.
-     * Implementiere `handleLockMessage(string $message)` im Model, um diese zu verarbeiten.
-     *
-     * @param string $message
-     * @return void
+     * Helper für optionale UI-Messages im Model.
      */
     protected function fireLockMessage(string $message): void
     {
@@ -139,15 +138,11 @@ trait PessimisticLockingTrait
     }
 
     /**
-     * Ermittelt die Broadcast-Domain. Bei aktivierter Tenancy wird die Tenant-Primary-Domain genutzt.
-     * Fallback ist "default".
-     *
-     * @return string
+     * Ermittelt die Broadcast-Domain.
      */
     protected function resolveDomain(): string
     {
         if ((bool) Config::get('locking.tenancy', false)) {
-            // Stancl Tenancy Helper sicher verwenden, falls vorhanden
             if (function_exists('tenant')) {
                 $tenant = \tenant();
                 if ($tenant && isset($tenant->primary_domain) && isset($tenant->primary_domain->domain)) {
@@ -157,5 +152,19 @@ trait PessimisticLockingTrait
         }
 
         return 'default';
+    }
+
+    /**
+     * Broadcast-Helper mit Config-Schalter (broadcast_self).
+     */
+    protected function broadcastEvent(object $event): void
+    {
+        $shouldSelf = (bool) Config::get('locking.broadcast_self', false);
+
+        if ($shouldSelf) {
+            broadcast($event);
+        } else {
+            broadcast($event)->toOthers();
+        }
     }
 }
