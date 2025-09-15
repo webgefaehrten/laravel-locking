@@ -20,11 +20,7 @@
             "Webgefaehrten\\Locking\\": "src/"
         }
     },
-    "scripts": {
-        "post-autoload-dump": [
-            "@php artisan locking:install || true"
-        ]
-    },
+    "scripts": {},
     "extra": {
         "laravel": {
             "providers": [
