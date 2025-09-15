@@ -9,6 +9,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Event;
+use Stancl\Tenancy\Database\Models\Tenant;
 use Webgefaehrten\Locking\Events\ModelLocked;
 use Webgefaehrten\Locking\Events\ModelUnlocked;
 use Webgefaehrten\Locking\Models\Lock;
@@ -108,11 +109,11 @@ class BroadcastLockEvent implements ShouldQueue
         }
 
         // Stancl Tenancy v3 (Tenant-Klasse direkt unter \Stancl\Tenancy)
-        if (class_exists(\Stancl\Tenancy\Tenancy::class) && class_exists(\Stancl\Tenancy\Tenant::class)) {
+        if (class_exists(\Stancl\Tenancy\Tenancy::class) && class_exists(Tenant::class)) {
             /** @var \Stancl\Tenancy\Tenancy $tenancy */
             $tenancy = \app(\Stancl\Tenancy\Tenancy::class);
             /** @var \Stancl\Tenancy\Tenant|null $tenant */
-            $tenant = \Stancl\Tenancy\Tenant::find($this->tenantId);
+            $tenant = Tenant::find($this->tenantId);
 
             if (! $tenant) {
                 return null;
