@@ -22,46 +22,39 @@
 composer require webgefaehrten/laravel-locking
 ```
 
-Dadurch wird automatisch `php artisan locking:install` ausgeführt  
-(*bei Bedarf `--no-scripts` nutzen, um es manuell zu machen*)
-
----
-
-### 2️⃣ Installation zentral (Standard)
+### 2️⃣ Manuell publishen
 ```bash
-php artisan locking:install
+php artisan vendor:publish --tag=locking-config
+php artisan vendor:publish --tag=locking-channels
+php artisan vendor:publish --tag=locking-migrations
 ```
 
-- Config: `config/locking.php`
-- Migrationen: `database/migrations`
-- Channels: `routes/channels.php`
-- Führt `php artisan migrate` direkt aus
-
----
-
-### 3️⃣ Installation tenant-aware (Stancl Tenancy)
+### 3️⃣ Migration ausführen
+- Zentral (ohne Tenancy):
 ```bash
-php artisan locking:install --tenancy
+php artisan migrate
+```
+
+- Tenant-aware (Stancl):
+```bash
 php artisan tenants:migrate
 ```
 
-- Migrationen werden in `database/migrations/tenant` kopiert
-- Du führst sie dann tenantweise mit `tenants:migrate` aus
-- In `config/locking.php`:  
-  ```php
-  'tenancy' => true
-  ```
+In `config/locking.php` ggf. aktivieren:
+```php
+'tenancy' => true
+```
 
 ---
 
 ## ⚙️ Konfiguration (`config/locking.php`)
 ```php
 return [
-    'timeout' => env('LOCKING_TIMEOUT', 5),        // Minuten bis ein Lock verfällt
+    'timeout' => env('LOCKING_TIMEOUT', 5),              // Minuten bis ein Lock verfällt
     'single_per_table' => env('LOCKING_SINGLE_PER_TABLE', true), // Nur ein Datensatz pro Tabelle/User
-    'interval' => env('LOCKING_INTERVAL', 5),      // Cleanup-Intervall in Minuten
-    'queue' => env('LOCKING_QUEUE', 'locking'),    // Queue für Cleanup-Jobs
-    'tenancy' => env('LOCKING_TENANCY', false),    // Multi-Tenancy aktivieren
+    'interval' => env('LOCKING_INTERVAL', 5),            // Cleanup-Intervall in Minuten
+    'tenancy' => env('LOCKING_TENANCY', false),          // Multi-Tenancy aktivieren
+    'broadcast_self' => env('LOCKING_BROADCAST_SELF', false), // Eigene Events empfangen
 ];
 ```
 
@@ -105,6 +98,41 @@ $tour->isLocked();     // bool
 $tour->lockedBy();     // User-Objekt
 ```
 
+### Usage mit Middleware (empfohlen)
+
+Sperre direkt beim Betreten der Bearbeitungsseite setzen. Wichtig: Tenancy-Middleware muss vorher laufen und implizites Model-Binding nutzen.
+
+```php
+// routes/web.php (Beispiel Stancl v4)
+use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
+use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
+
+Route::middleware([
+    InitializeTenancyByDomain::class,
+    PreventAccessFromCentralDomains::class,
+    'web','auth',
+    App\Http\Middleware\CheckLock::class.':tour', // Parametername des Modells
+])->group(function () {
+    Route::get('/tours/{tour}/edit', [TourController::class, 'edit']);
+});
+```
+
+```php
+// App\Http\Middleware\CheckLock.php
+public function handle($request, Closure $next, string $param = 'id') {
+    $model = $request->route($param);
+    if ($model && method_exists($model, 'lock')) {
+        if (! $model->lock()) {
+            $msg = 'Dieser Eintrag ist aktuell gesperrt.';
+            return $request->expectsJson()
+                ? response()->json(['status' => $msg], 423)
+                : redirect()->back()->with('status', $msg);
+        }
+    }
+    return $next($request);
+}
+```
+
 ---
 
 ### Optimistic Locking (Änderungskollision verhindern)
@@ -126,14 +154,13 @@ class Contact extends Model {
 
 ## 📡 Broadcasting & Livewire
 
-- Beim Sperren (`lock`) wird ein `ModelLocked` Event via PrivateChannel `locks.{domain}` gebroadcastet
-- Beim Freigeben (`unlock`) ein `ModelUnlocked` Event
-- Andere Nutzer können dies per Livewire-Listener empfangen und z. B. mit **Flux Toast** anzeigen
+- Sperren (`lock`) sendet `ModelLocked`
+- Freigeben (`unlock`) sendet `ModelUnlocked`
+- Broadcasting erfolgt synchron im Request (kein Queue-Zwang)
 
-Hinweis (Queue + Tenancy):
-- Das Paket broadcastet Events über einen Queue-Job (`BroadcastLockEvent`).
-- Wenn `tenancy=true`, wird im Job automatisch der Tenant-Kontext initialisiert, damit die Events im richtigen Mandantenkanal landen.
-- Stelle sicher, dass ein Queue-Worker/Horizon läuft und die Queue aus `config('locking.queue', 'locking')` verarbeitet.
+Channel-Namen:
+- Tenancy aktiv: `private-tenant.{domain}.locks` (zusätzlich kompatibel: `private-tenant.{domain}.lock`)
+- Ohne Tenancy: `private-locks.{domain}` (zusätzlich kompatibel: `private-lock.{domain}`)
 
 **Channel Auth (`routes/channels.php`):**
 ```php
@@ -149,8 +176,8 @@ Broadcast::channel('locks.{domain}', function ($user, $domain) {
 ```
 
 Hinweis zur Domain-Ermittlung:
-- Wenn `config('locking.tenancy') === true`, ermittelt das Trait die Domain automatisch aus `tenant()->primary_domain->domain` und nutzt damit garantiert den Channel `locks.{tenantDomain}`.
-- Wenn Tenancy deaktiviert ist, wird standardmäßig die Domain `default` verwendet.
+- Bei `tenancy=true` ermittelt das Trait die Domain aus `tenant()->primary_domain->domain`.
+- Ohne Tenancy wird standardmäßig die Domain `default` verwendet.
 
 ---
 

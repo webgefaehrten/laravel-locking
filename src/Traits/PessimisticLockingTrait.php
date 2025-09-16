@@ -5,7 +5,6 @@ namespace Webgefaehrten\Locking\Traits;
 use Webgefaehrten\Locking\Models\Lock;
 use Webgefaehrten\Locking\Events\ModelLocked;
 use Webgefaehrten\Locking\Events\ModelUnlocked;
-use Webgefaehrten\Locking\Jobs\BroadcastLockEvent;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Event;
@@ -70,15 +69,12 @@ trait PessimisticLockingTrait
                     $modelId = (int) $oldLock->lockable_id;
                     $oldLock->delete();
 
-                    // Broadcast per Queue-Job mit Tenant-Kontext
-                    BroadcastLockEvent::dispatch(
-                        'unlocked',
-                        $domain,
-                        $this->resolveTenantId(),
-                        null,
-                        $modelType,
-                        $modelId
-                    );
+                    // Direkt synchron broadcasten (im Tenant-Kontext)
+                    $this->withTenantContext(function () use ($domain, $modelType, $modelId) {
+                        $event = new ModelUnlocked($domain, $modelType, $modelId);
+                        Event::dispatch($event);
+                        $this->broadcastEvent($event);
+                    });
                 });
         }
 
@@ -88,15 +84,12 @@ trait PessimisticLockingTrait
             ['locked_by' => Auth::id(), 'locked_at' => Carbon::now()]
         );
 
-        // Broadcast per Queue-Job mit Tenant-Kontext
-        BroadcastLockEvent::dispatch(
-            'locked',
-            $domain,
-            $this->resolveTenantId(),
-            $lock->id,
-            null,
-            null
-        );
+        // Direkt synchron broadcasten (im Tenant-Kontext)
+        $this->withTenantContext(function () use ($lock, $domain) {
+            $event = new ModelLocked($lock, $domain);
+            Event::dispatch($event);
+            $this->broadcastEvent($event);
+        });
 
         return true;
     }
@@ -112,15 +105,12 @@ trait PessimisticLockingTrait
         if ($lock && $lock->locked_by === Auth::id()) {
             $lock->delete();
 
-            // Broadcast per Queue-Job mit Tenant-Kontext
-            BroadcastLockEvent::dispatch(
-                'unlocked',
-                $domain,
-                $this->resolveTenantId(),
-                null,
-                static::class,
-                (int) $this->id
-            );
+            // Direkt synchron broadcasten (im Tenant-Kontext)
+            $this->withTenantContext(function () use ($domain) {
+                $event = new ModelUnlocked($domain, static::class, (int) $this->id);
+                Event::dispatch($event);
+                $this->broadcastEvent($event);
+            });
         }
     }
 
@@ -220,5 +210,29 @@ trait PessimisticLockingTrait
         } else {
             \broadcast($event)->toOthers();
         }
+    }
+
+    /**
+     * Führt eine Aktion ggf. innerhalb eines initialisierten Tenant-Kontexts aus.
+     * Erwartet, dass Tenancy im Request bereits aktiv ist. Falls nicht verfügbar,
+     * wird die Aktion ohne zusätzlichen Kontext ausgeführt.
+     */
+    protected function withTenantContext(callable $action): void
+    {
+        if (! (bool) Config::get('locking.tenancy', false)) {
+            $action();
+            return;
+        }
+
+        if (function_exists('tenant')) {
+            $tenant = \tenant();
+            if ($tenant) {
+                $action();
+                return;
+            }
+        }
+
+        // Fallback: ohne explizite Initialisierung ausführen
+        $action();
     }
 }
