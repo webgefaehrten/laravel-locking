@@ -3,6 +3,7 @@
 namespace Webgefaehrten\Locking\Traits;
 
 use Exception;
+use Illuminate\Support\Carbon;
 
 /**
  * DE: Trait für optimistisches Locking auf Basis von Eloquent-Timestamps.
@@ -35,9 +36,30 @@ trait OptimisticLockingTrait
     protected static function bootOptimisticLockingTrait()
     {
         static::updating(function ($model) {
-            $originalUpdatedAt = $model->getOriginal('updated_at');
+            $updatedAtColumn = $model->getUpdatedAtColumn();
+            $originalUpdatedAt = $model->getOriginal($updatedAtColumn);
 
-            if ($originalUpdatedAt && $model->updated_at->ne($originalUpdatedAt)) {
+            if (!$originalUpdatedAt) {
+                return;
+            }
+
+            // Aktuellen DB-Wert laden (ohne Scopes), um Race-Conditions zu erkennen
+            $currentUpdatedAt = $model->newQueryWithoutScopes()
+                ->whereKey($model->getKey())
+                ->value($updatedAtColumn);
+
+            if (!$currentUpdatedAt) {
+                return;
+            }
+
+            $original = $originalUpdatedAt instanceof Carbon
+                ? $originalUpdatedAt
+                : Carbon::parse((string) $originalUpdatedAt);
+            $current = $currentUpdatedAt instanceof Carbon
+                ? $currentUpdatedAt
+                : Carbon::parse((string) $currentUpdatedAt);
+
+            if ($current->ne($original)) {
                 if (method_exists($model, 'handleConflictMessage')) {
                     $model->handleConflictMessage(
                         "Dieser Datensatz wurde bereits von jemand anderem geändert. Bitte Seite neu laden."

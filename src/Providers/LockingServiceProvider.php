@@ -6,11 +6,20 @@ use Illuminate\Support\ServiceProvider;
 use Webgefaehrten\Locking\Console\InstallCommand;
 use Webgefaehrten\Locking\Console\UnlockExpiredLocksCommand;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Routing\Router;
+use Webgefaehrten\Locking\Http\Middleware\CheckLock as CheckLockMiddleware;
+use Webgefaehrten\Locking\Http\Middleware\CheckOptimisticLock as CheckOptimisticLockMiddleware;
 
 class LockingServiceProvider extends ServiceProvider
 {
     public function boot()
     {
+        // Paket-Middleware registrieren
+        $this->app->resolving(Router::class, function (Router $router) {
+            $router->aliasMiddleware('locking.check', CheckLockMiddleware::class);
+            $router->aliasMiddleware('locking.optimistic', CheckOptimisticLockMiddleware::class);
+        });
+
         $this->publishes([
             __DIR__ . '/../../config/locking.php' => config_path('locking.php'),
         ], 'locking-config');
